@@ -632,8 +632,8 @@ async function doSearch() {
     } catch(e) {}
   }
 
-  // ② Gemini 웹검색으로 종목코드 자동 조회
-  if (S.geminiKey) {
+  // ② Claude로 종목코드 자동 조회
+  if (S.claudeKey) {
     btn.innerHTML = '<span class="btn-spin"></span> 종목코드 검색 중…';
     const info = await lookupByGemini(val);
     if (info) {
@@ -655,8 +655,8 @@ async function doSearch() {
   }
 
   // ③ 모두 실패 → 수동 입력 안내
-  const hint = !S.dartKey && !S.geminiKey
-    ? 'API 키가 없어 자동 조회가 불가합니다. ⚙ 설정에서 Gemini 또는 DART API 키를 입력하거나, 아래에 직접 입력하세요.'
+  const hint = !S.dartKey && !S.claudeKey
+    ? 'API 키가 없어 자동 조회가 불가합니다. ⚙ 설정에서 Claude API 키를 입력하거나 아래에 직접 입력하세요.'
     : '자동 조회 실패. 아래에 직접 입력해주세요.';
   showErr('search-err', hint);
   toggleManual(true, val);
@@ -664,51 +664,39 @@ async function doSearch() {
 }
 
 async function lookupByGemini(name) {
+  // Claude API로 종목코드 조회
+  if (!S.claudeKey) return null;
   try {
-    const prompt = `한국 주식시장에 상장된 "${name}" 기업의 정보를 알려주세요.
-
-아래 JSON 형식으로만 응답하세요. 코드블록(\`\`\`)이나 다른 텍스트 없이 JSON만:
-
-상장기업인 경우:
-{"found":true,"full_name":"정식 기업명","stock_code":"6자리종목코드","market":"KOSPI","industry":"업종명"}
-
-상장기업이 아니거나 모르는 경우:
-{"found":false}
-
-예시: 삼성전자 → {"found":true,"full_name":"삼성전자","stock_code":"005930","market":"KOSPI","industry":"반도체"}`;
-
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${S.geminiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0, maxOutputTokens: 200 }
-          // Google Search 미사용 — 학습 데이터만으로 충분
-        })
-      }
-    );
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': S.claudeKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 200,
+        messages: [{
+          role: 'user',
+          content: `한국 주식시장에 상장된 "${name}" 기업의 종목코드를 알려주세요.
+JSON으로만 응답 (다른 텍스트 없이):
+상장기업: {"found":true,"full_name":"정식기업명","stock_code":"6자리","market":"KOSPI 또는 KOSDAQ 또는 코넥스","industry":"업종명"}
+아닌 경우: {"found":false}`
+        }]
+      })
+    });
     const d = await res.json();
-
-    if (!res.ok || d.error) {
-      console.warn('Gemini 오류:', d.error?.message || res.status);
-      return null;
-    }
-
-    const raw = (d.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
-    console.log('Gemini 종목조회 응답:', raw);
-
-    // 코드블록 제거 후 JSON 추출 (greedy)
+    const raw = (d.content?.[0]?.text || '').trim();
+    console.log('Claude 종목조회 응답:', raw);
     const cleaned = raw.replace(/```json\n?/g,'').replace(/```/g,'').trim();
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (!match) return null;
-
     const parsed = JSON.parse(match[0]);
     return (parsed.found === true || parsed.found === 'true') ? parsed : null;
-
   } catch(e) {
-    console.warn('Gemini 종목코드 조회 실패:', e.message);
+    console.warn('Claude 종목코드 조회 실패:', e.message);
     return null;
   }
 }
