@@ -614,36 +614,100 @@ async function doSearch() {
   const btn = document.getElementById('search-btn');
   btn.innerHTML = '<span class="btn-spin"></span> 조회 중';
   btn.disabled = true;
+  hideErr('search-err');
 
-  if (!S.dartKey) { btn.innerHTML = '조회'; btn.disabled = false; toggleManual(true, val); return; }
-
-  try {
-    const base = `${S.proxyUrl}https://opendart.fss.or.kr/api`;
-    // 공시 검색으로 기업코드 추출
-    const r = await fetch(`${base}/list.json?crtfc_key=${S.dartKey}&corp_name=${encodeURIComponent(val)}&bgn_de=20240101&end_de=20241231&page_count=5`);
-    const d = await r.json();
-
-    if (d.status === '000' && d.list?.length) {
-      const c = d.list[0];
-      S.co.name = c.corp_name; S.co.corpCode = c.corp_code; S.co.stockCode = c.stock_code || '';
-      showCard(c.corp_name, c.corp_code, c.stock_code || '-');
-      hideErr('search-err');
-    } else {
-      showErr('search-err', `DART 조회 결과 없음(${d.message||d.status}). 직접 입력해주세요.`);
-      toggleManual(true, val);
-    }
-  } catch(e) {
-    showErr('search-err', 'DART API 오류: ' + e.message + '. CORS 프록시 설정을 확인하거나 직접 입력하세요.');
-    toggleManual(true, val);
+  // ① DART API 시도
+  if (S.dartKey) {
+    try {
+      const base = `${S.proxyUrl}https://opendart.fss.or.kr/api`;
+      const r = await fetch(`${base}/list.json?crtfc_key=${S.dartKey}&corp_name=${encodeURIComponent(val)}&bgn_de=20240101&end_de=20251231&page_count=5`);
+      const d = await r.json();
+      if (d.status === '000' && d.list?.length) {
+        const c = d.list[0];
+        S.co.name = c.corp_name; S.co.corpCode = c.corp_code; S.co.stockCode = c.stock_code || '';
+        showCard(c.corp_name, c.corp_code, c.stock_code || '-');
+        btn.innerHTML = '조회'; btn.disabled = false;
+        return;
+      }
+    } catch(e) {}
   }
 
+  // ② Gemini 웹검색으로 종목코드 자동 조회
+  if (S.geminiKey) {
+    btn.innerHTML = '<span class="btn-spin"></span> 종목코드 검색 중…';
+    const info = await lookupByGemini(val);
+    if (info) {
+      S.co.name      = info.full_name || val;
+      S.co.corpCode  = info.corp_code || '';
+      S.co.stockCode = info.stock_code || '';
+      S.co.industry  = info.industry || '';
+      S.co.market    = info.market || 'KOSPI';
+      showCard(info.full_name || val, info.corp_code || 'Gemini 조회', info.stock_code || '-');
+      // 수동 입력 필드에도 자동 채우기
+      document.getElementById('m-name').value     = info.full_name || val;
+      document.getElementById('m-stock').value    = info.stock_code || '';
+      document.getElementById('m-industry').value = info.industry || '';
+      const mkt = document.getElementById('m-market');
+      if (info.market && [...mkt.options].some(o => o.value === info.market)) mkt.value = info.market;
+      btn.innerHTML = '조회'; btn.disabled = false;
+      return;
+    }
+  }
+
+  // ③ 모두 실패 → 수동 입력 안내
+  const hint = !S.dartKey && !S.geminiKey
+    ? 'API 키가 없어 자동 조회가 불가합니다. ⚙ 설정에서 Gemini 또는 DART API 키를 입력하거나, 아래에 직접 입력하세요.'
+    : '자동 조회 실패. 아래에 직접 입력해주세요.';
+  showErr('search-err', hint);
+  toggleManual(true, val);
   btn.innerHTML = '조회'; btn.disabled = false;
 }
 
-function showCard(name, code, stock) {
+async function lookupByGemini(name) {
+  try {
+    const prompt = `한국 주식시장에 상장된 "${name}" 기업의 정보를 정확하게 알려주세요.
+
+주의:
+- 반드시 실제 상장기업만 응답
+- 종목코드는 KRX 기준 정확한 6자리 숫자
+- 불확실하면 found: false
+
+아래 JSON으로만 응답 (마크다운 없이):
+
+상장기업인 경우:
+{"found":true,"full_name":"정식 기업명","stock_code":"6자리","market":"KOSPI 또는 KOSDAQ 또는 코넥스","industry":"업종명","corp_code":"DART 8자리코드 또는 null"}
+
+아닌 경우:
+{"found":false}`;
+
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${S.geminiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          tools: [{ googleSearch: {} }],
+          generationConfig: { temperature: 0.05, maxOutputTokens: 300 }
+        })
+      }
+    );
+    const d = await res.json();
+    const raw = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const match = raw.match(/\{[\s\S]*?\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      return parsed.found ? parsed : null;
+    }
+  } catch(e) { console.warn('Gemini 종목코드 조회 실패:', e.message); }
+  return null;
+}
+
+function showCard(name, code, stock, market) {
   document.getElementById('co-card').classList.add('show');
   document.getElementById('co-name-disp').textContent = name;
-  document.getElementById('co-meta-disp').textContent = `기업코드: ${code} | 종목코드: ${stock}`;
+  const mktStr = market ? ` | ${market}` : '';
+  document.getElementById('co-meta-disp').textContent = `종목코드: ${stock}${mktStr} | 기업코드(DART): ${code}`;
   document.getElementById('manual-section').style.display = 'none';
 }
 
