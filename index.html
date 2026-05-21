@@ -665,20 +665,17 @@ async function doSearch() {
 
 async function lookupByGemini(name) {
   try {
-    const prompt = `한국 주식시장에 상장된 "${name}" 기업의 정보를 정확하게 알려주세요.
+    const prompt = `한국 주식시장에 상장된 "${name}" 기업의 정보를 알려주세요.
 
-주의:
-- 반드시 실제 상장기업만 응답
-- 종목코드는 KRX 기준 정확한 6자리 숫자
-- 불확실하면 found: false
-
-아래 JSON으로만 응답 (마크다운 없이):
+아래 JSON 형식으로만 응답하세요. 코드블록(\`\`\`)이나 다른 텍스트 없이 JSON만:
 
 상장기업인 경우:
-{"found":true,"full_name":"정식 기업명","stock_code":"6자리","market":"KOSPI 또는 KOSDAQ 또는 코넥스","industry":"업종명","corp_code":"DART 8자리코드 또는 null"}
+{"found":true,"full_name":"정식 기업명","stock_code":"6자리종목코드","market":"KOSPI","industry":"업종명"}
 
-아닌 경우:
-{"found":false}`;
+상장기업이 아니거나 모르는 경우:
+{"found":false}
+
+예시: 삼성전자 → {"found":true,"full_name":"삼성전자","stock_code":"005930","market":"KOSPI","industry":"반도체"}`;
 
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${S.geminiKey}`,
@@ -687,20 +684,33 @@ async function lookupByGemini(name) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          tools: [{ googleSearch: {} }],
-          generationConfig: { temperature: 0.05, maxOutputTokens: 300 }
+          generationConfig: { temperature: 0, maxOutputTokens: 200 }
+          // Google Search 미사용 — 학습 데이터만으로 충분
         })
       }
     );
     const d = await res.json();
-    const raw = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const match = raw.match(/\{[\s\S]*?\}/);
-    if (match) {
-      const parsed = JSON.parse(match[0]);
-      return parsed.found ? parsed : null;
+
+    if (!res.ok || d.error) {
+      console.warn('Gemini 오류:', d.error?.message || res.status);
+      return null;
     }
-  } catch(e) { console.warn('Gemini 종목코드 조회 실패:', e.message); }
-  return null;
+
+    const raw = (d.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+    console.log('Gemini 종목조회 응답:', raw);
+
+    // 코드블록 제거 후 JSON 추출 (greedy)
+    const cleaned = raw.replace(/```json\n?/g,'').replace(/```/g,'').trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+
+    const parsed = JSON.parse(match[0]);
+    return (parsed.found === true || parsed.found === 'true') ? parsed : null;
+
+  } catch(e) {
+    console.warn('Gemini 종목코드 조회 실패:', e.message);
+    return null;
+  }
 }
 
 function showCard(name, code, stock, market) {
