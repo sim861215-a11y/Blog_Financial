@@ -1,0 +1,25 @@
+# API 키·민감 정보
+*.env
+.env.*
+secrets.json
+config.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 에디터
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 임시·백업
+*.tmp
+*.bak
+draft_*.html
+
+# Node (향후 빌드 도구 사용 시)
+node_modules/
+npm-debug.log*
