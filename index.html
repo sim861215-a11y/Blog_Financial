@@ -500,7 +500,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
       <input type="password" id="gemini-key" placeholder="AIza...">
       <div style="font-size:11px;color:var(--muted);margin-top:4px;">
         <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--accent);">Google AI Studio에서 무료 발급 →</a>
-        &nbsp;·&nbsp; gemini-2.0-flash + Google Search 사용
+        &nbsp;·&nbsp; gemini-2.5-flash + Google Search 사용
       </div>
     </div>
 
@@ -681,7 +681,7 @@ async function lookupByGemini(name) {
 {"found":false}`;
 
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${S.geminiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${S.geminiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1231,7 +1231,7 @@ async function geminiRequest(prompt, attempt) {
 
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${S.geminiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${S.geminiKey}`,
       {
         method: 'POST',
         signal: controller.signal,
@@ -2005,7 +2005,7 @@ ${existingList}
 
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${S.geminiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${S.geminiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
