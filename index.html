@@ -632,8 +632,8 @@ async function doSearch() {
     } catch(e) {}
   }
 
-  // ② Claude로 종목코드 자동 조회
-  if (S.claudeKey) {
+  // ② 네이버 금융 자동완성으로 종목코드 조회 (API 키 불필요)
+  {
     btn.innerHTML = '<span class="btn-spin"></span> 종목코드 검색 중…';
     const info = await lookupByGemini(val);
     if (info) {
@@ -655,48 +655,35 @@ async function doSearch() {
   }
 
   // ③ 모두 실패 → 수동 입력 안내
-  const hint = !S.dartKey && !S.claudeKey
-    ? 'API 키가 없어 자동 조회가 불가합니다. ⚙ 설정에서 Claude API 키를 입력하거나 아래에 직접 입력하세요.'
-    : '자동 조회 실패. 아래에 직접 입력해주세요.';
+  const hint = '자동 조회 실패. 아래에 직접 입력하거나 <a href="https://kind.krx.co.kr" target="_blank" style="color:var(--accent);">KRX KIND</a>에서 종목코드를 확인하세요.';
   showErr('search-err', hint);
   toggleManual(true, val);
   btn.innerHTML = '조회'; btn.disabled = false;
 }
 
 async function lookupByGemini(name) {
-  // Claude API로 종목코드 조회
-  if (!S.claudeKey) return null;
+  // 네이버 금융 자동완성 API — API 키 불필요, CORS 없음
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': S.claudeKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 200,
-        messages: [{
-          role: 'user',
-          content: `한국 주식시장에 상장된 "${name}" 기업의 종목코드를 알려주세요.
-JSON으로만 응답 (다른 텍스트 없이):
-상장기업: {"found":true,"full_name":"정식기업명","stock_code":"6자리","market":"KOSPI 또는 KOSDAQ 또는 코넥스","industry":"업종명"}
-아닌 경우: {"found":false}`
-        }]
-      })
-    });
+    const url = `https://ac.stock.naver.com/ac?q=${encodeURIComponent(name)}&target=stock,index,etf`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('naver ' + res.status);
     const d = await res.json();
-    const raw = (d.content?.[0]?.text || '').trim();
-    console.log('Claude 종목조회 응답:', raw);
-    const cleaned = raw.replace(/```json\n?/g,'').replace(/```/g,'').trim();
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    const parsed = JSON.parse(match[0]);
-    return (parsed.found === true || parsed.found === 'true') ? parsed : null;
+
+    // 응답 형식: { items: [["종목코드","기업명","시장",...], ...] }
+    const items = d?.items || [];
+    if (!items.length) return null;
+
+    // 첫 번째 결과 사용
+    const [code, fullName, market] = items[0];
+    if (!code || !fullName) return null;
+
+    // 시장 매핑
+    const mktMap = { 'KOSPI': 'KOSPI', 'KOSDAQ': 'KOSDAQ', 'KONEX': '코넥스', 'KOSDAQ GLOBAL': 'KOSDAQ' };
+    const mkt = mktMap[market] || market || 'KOSPI';
+
+    return { found: true, full_name: fullName, stock_code: code, market: mkt, industry: '' };
   } catch(e) {
-    console.warn('Claude 종목코드 조회 실패:', e.message);
+    console.warn('네이버 금융 조회 실패:', e.message);
     return null;
   }
 }
