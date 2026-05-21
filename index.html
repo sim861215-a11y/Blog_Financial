@@ -456,7 +456,24 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
   <button class="btn btn-primary" id="btn-next" onclick="nextStep()">다음 →</button>
 </div>
 
-<!-- ══════════════════════ Settings Modal ══════════════════════ -->
+<!-- ══ 비밀번호 로그인 오버레이 ══ -->
+<div id="login-overlay" style="display:none;position:fixed;inset:0;background:#111111;z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:white;border-radius:12px;padding:36px 32px;width:100%;max-width:360px;margin:16px;text-align:center;">
+    <div style="font-size:22px;font-weight:700;margin-bottom:6px;">🔒</div>
+    <div style="font-size:16px;font-weight:700;margin-bottom:4px;">접근 제한</div>
+    <div style="font-size:13px;color:#888;margin-bottom:24px;">비밀번호를 입력하세요</div>
+    <input type="password" id="login-pw" placeholder="비밀번호"
+      style="width:100%;padding:10px 14px;border:1px solid #e0ddd6;border-radius:6px;font-size:15px;text-align:center;margin-bottom:12px;"
+      onkeydown="if(event.key==='Enter')checkLogin()">
+    <button onclick="checkLogin()"
+      style="width:100%;background:#111111;color:white;border:none;padding:11px;border-radius:6px;font-size:15px;font-weight:700;cursor:pointer;">
+      입력
+    </button>
+    <div id="login-err" style="color:#c0392b;font-size:12px;margin-top:10px;min-height:18px;"></div>
+  </div>
+</div>
+
+<!-- ══ Settings Modal ══ -->
 <div class="overlay" id="modal">
   <div class="modal">
     <div class="modal-title">⚙ API 설정</div>
@@ -521,6 +538,19 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
       </div>
     </div>
 
+    <div class="field">
+      <label>접근 비밀번호 설정 <span style="font-weight:400;">(설정 시 페이지 열 때 비밀번호 입력 필요)</span></label>
+      <input type="password" id="pw-input" placeholder="새 비밀번호 입력 (비워두면 변경 안 됨)">
+      <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;text-transform:none;font-weight:normal;">
+          <input type="checkbox" id="pw-clear"> 비밀번호 해제 (누구나 접속 가능)
+        </label>
+      </div>
+      <div id="pw-status" style="font-size:12px;color:var(--success);margin-top:4px;">
+        ${localStorage.getItem('app_pw') ? '🔒 비밀번호 설정됨' : '🔓 비밀번호 없음 (누구나 접속 가능)'}
+      </div>
+    </div>
+
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn btn-primary" onclick="saveSettings()">저장</button>
@@ -534,11 +564,11 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 // ══════════════════════════════════════════════
 const S = {
   step: 1,
-  dartKey: sessionStorage.getItem('dartKey') || '',
-  claudeKey: sessionStorage.getItem('claudeKey') || '',
-  geminiKey: sessionStorage.getItem('geminiKey') || '',
-  proxyUrl: sessionStorage.getItem('proxyUrl') || '',
-  templates: JSON.parse(sessionStorage.getItem('templates') || '[]'),
+  dartKey: localStorage.getItem('dartKey') || '',
+  claudeKey: localStorage.getItem('claudeKey') || '',
+  geminiKey: localStorage.getItem('geminiKey') || '',
+  proxyUrl: localStorage.getItem('proxyUrl') || '',
+  templates: JSON.parse(localStorage.getItem('templates') || '[]'),
   co: { name:'', corpCode:'', stockCode:'', industry:'', market:'KOSDAQ', fiscal:12, year:2024 },
   fin: { years:[], raw:{} },
   newsData: null,
@@ -2047,11 +2077,28 @@ function saveSettings() {
   S.claudeKey = document.getElementById('claude-key').value.trim();
   S.geminiKey = document.getElementById('gemini-key').value.trim();
   S.proxyUrl = document.getElementById('proxy-url').value.trim();
-  sessionStorage.setItem('dartKey', S.dartKey);
-  sessionStorage.setItem('claudeKey', S.claudeKey);
-  sessionStorage.setItem('geminiKey', S.geminiKey);
-  sessionStorage.setItem('proxyUrl', S.proxyUrl);
-  sessionStorage.setItem('templates', JSON.stringify(S.templates));
+  localStorage.setItem('dartKey', S.dartKey);
+  localStorage.setItem('claudeKey', S.claudeKey);
+  localStorage.setItem('geminiKey', S.geminiKey);
+  localStorage.setItem('proxyUrl', S.proxyUrl);
+  localStorage.setItem('templates', JSON.stringify(S.templates));
+
+  // 비밀번호 설정
+  const newPw = document.getElementById('pw-input').value.trim();
+  if (newPw) {
+    localStorage.setItem('app_pw', btoa(unescape(encodeURIComponent(newPw))));
+    sessionStorage.setItem('app_auth', '1');
+    document.getElementById('pw-input').value = '';
+    document.getElementById('pw-status').textContent = '✓ 비밀번호가 설정되었습니다';
+  }
+  const clearPw = document.getElementById('pw-clear').checked;
+  if (clearPw) {
+    localStorage.removeItem('app_pw');
+    sessionStorage.removeItem('app_auth');
+    document.getElementById('pw-status').textContent = '비밀번호가 해제되었습니다';
+    document.getElementById('pw-clear').checked = false;
+  }
+
   closeModal();
   if (S.templates.length) document.getElementById('tpl-info').style.display='block';
 }
@@ -2091,9 +2138,43 @@ function hideErr(id) {
   if (el) el.style.display = 'none';
 }
 
+// ══ 비밀번호 보호 ══
+function checkLogin() {
+  const stored = localStorage.getItem('app_pw');
+  if (!stored) { hideLogin(); return; }
+  const input = document.getElementById('login-pw').value;
+  const hashed = btoa(unescape(encodeURIComponent(input)));
+  if (hashed === stored) {
+    sessionStorage.setItem('app_auth', '1');
+    hideLogin();
+  } else {
+    const err = document.getElementById('login-err');
+    err.textContent = '비밀번호가 맞지 않습니다.';
+    const inp = document.getElementById('login-pw');
+    inp.style.borderColor = '#c0392b';
+    inp.value = '';
+    inp.focus();
+    setTimeout(() => { err.textContent = ''; inp.style.borderColor = ''; }, 2500);
+  }
+}
+
+function hideLogin() {
+  document.getElementById('login-overlay').style.display = 'none';
+}
+
+function initAuth() {
+  const stored = localStorage.getItem('app_pw');
+  if (!stored) return; // 비밀번호 없으면 바로 진입
+  if (sessionStorage.getItem('app_auth') === '1') return; // 이미 인증됨
+  const ov = document.getElementById('login-overlay');
+  ov.style.display = 'flex';
+  setTimeout(() => document.getElementById('login-pw').focus(), 100);
+}
+
 document.getElementById('modal').addEventListener('click', e => { if(e.target===e.currentTarget)closeModal(); });
 document.getElementById('btn-prev').style.visibility = 'hidden';
-updateLearnBadge();  // 초기 배지 표시
+updateLearnBadge();
+initAuth(); // 비밀번호 체크
 </script>
 </body>
 </html>
