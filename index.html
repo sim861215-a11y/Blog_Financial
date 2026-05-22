@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>심사보고서 자동화 시스템</title>
+<title>기업분석 시스템</title>
 <link href="https://cdn.jsdelivr.net/gh/spoqa/spoqa-han-sans@latest/css/SpoqaHanSansNeo.css" rel="stylesheet">
 <style>
 :root {
@@ -161,7 +161,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 
 <!-- ── Header ── -->
 <header class="app-header">
-  <div class="app-title">📊 심사보고서 자동화 시스템</div>
+  <div class="app-title">📊 기업분석 시스템</div>
   <div class="hdr-btns">
     <button class="hdr-btn" onclick="openSettings()">⚙ API 설정</button>
     <button class="hdr-btn" onclick="if(confirm('초기화하시겠습니까?'))location.reload()">↺ 초기화</button>
@@ -187,17 +187,18 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 <!-- ══════════════════════ STEP 1 ══════════════════════ -->
 <div class="panel active" id="p1">
   <div class="panel-title">조사 대상 기업 입력</div>
-  <div class="panel-desc">기업명 또는 종목코드로 검색하거나, 직접 입력하세요.</div>
+  <div class="panel-desc">기업명 또는 종목코드를 입력하면 자동으로 검색됩니다.</div>
 
-  <div class="field">
+  <div class="field" style="position:relative;">
     <label>기업명 / 종목코드</label>
-    <div class="row">
-      <input type="text" id="co-input" placeholder="예: 삼성전자  또는  005930" onkeydown="if(event.key==='Enter')doSearch()">
-      <button class="btn btn-primary" id="search-btn" onclick="doSearch()" style="flex:none;">조회</button>
-    </div>
+    <input type="text" id="co-input" placeholder="예: 삼성전자  또는  005930"
+      autocomplete="off"
+      oninput="onStockInput(this.value)"
+      onkeydown="onStockKeydown(event)"
+      onfocus="onStockInput(this.value)">
+    <div id="stock-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid var(--border);border-radius:0 0 8px 8px;box-shadow:0 4px 12px rgba(0,0,0,.1);z-index:300;max-height:280px;overflow-y:auto;"></div>
   </div>
 
-  <div class="info-box">💡 DART API 키가 설정되어 있으면 자동 조회합니다. 미설정 시 아래에 직접 입력하세요.</div>
   <div class="err-box" id="search-err"></div>
 
   <div class="company-card" id="co-card">
@@ -330,6 +331,21 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 <div class="panel" id="p3">
   <div class="panel-title">기업분석 보고서 초안 작성</div>
   <div class="panel-desc">재무데이터와 유사상장기업 데이터를 바탕으로 AI가 초안을 생성합니다. 에디터에서 자유롭게 수정하세요.</div>
+
+  <!-- 보고서 유형 선택 -->
+  <div style="display:flex; gap:0; margin-bottom:16px; border:1px solid var(--border); border-radius:8px; overflow:hidden; width:fit-content;">
+    <button id="mode-blog" onclick="setReportMode('blog')"
+      style="padding:9px 22px; font-size:13px; font-weight:700; border:none; cursor:pointer; background:#111111; color:white; transition:all .2s;">
+      📝 블로그용
+    </button>
+    <button id="mode-review" onclick="setReportMode('review')"
+      style="padding:9px 22px; font-size:13px; font-weight:700; border:none; cursor:pointer; background:white; color:var(--muted); border-left:1px solid var(--border); transition:all .2s;">
+      🔍 심사용
+    </button>
+  </div>
+  <div id="mode-desc" style="font-size:12px; color:var(--muted); margin:-8px 0 14px; padding-left:2px;">
+    일반 투자자 대상 · 쉬운 언어 · SVG 시장 차트 포함
+  </div>
 
   <div style="display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; align-items:center;">
     <select id="rpt-type" style="max-width:240px; flex:none;">
@@ -605,94 +621,215 @@ function nextStep() {
 function prevStep() { if (S.step > 1) goTo(S.step - 1); }
 
 // ══════════════════════════════════════════════
-// STEP 1 — COMPANY
+// 종목 데이터베이스 (코드, 기업명, 시장, 업종)
 // ══════════════════════════════════════════════
-async function doSearch() {
-  const val = document.getElementById('co-input').value.trim();
-  if (!val) { alert('기업명 또는 종목코드를 입력하세요.'); return; }
+const STOCK_DB_DATE = '2026-05-21';   // stocks.xlsx 코드입력일자와 동기화
 
-  const btn = document.getElementById('search-btn');
-  btn.innerHTML = '<span class="btn-spin"></span> 조회 중';
-  btn.disabled = true;
-  hideErr('search-err');
+const STOCK_DB = [
+  // KOSPI
+  ['A005930','삼성전자','KOSPI','반도체'],['A000660','SK하이닉스','KOSPI','반도체'],
+  ['A207940','삼성바이오로직스','KOSPI','제약/바이오'],['A005490','POSCO홀딩스','KOSPI','철강'],
+  ['A035420','NAVER','KOSPI','IT서비스'],['A000270','기아','KOSPI','자동차'],
+  ['A005380','현대차','KOSPI','자동차'],['A051910','LG화학','KOSPI','화학'],
+  ['A006400','삼성SDI','KOSPI','배터리'],['A028260','삼성물산','KOSPI','건설/상사'],
+  ['A012330','현대모비스','KOSPI','자동차부품'],['A068270','셀트리온','KOSPI','제약/바이오'],
+  ['A003550','LG','KOSPI','지주'],['A055550','신한지주','KOSPI','금융지주'],
+  ['A105560','KB금융','KOSPI','금융지주'],['A035720','카카오','KOSPI','IT서비스'],
+  ['A096770','SK이노베이션','KOSPI','에너지/화학'],['A017670','SK텔레콤','KOSPI','통신'],
+  ['A030200','KT','KOSPI','통신'],['A032830','삼성생명','KOSPI','보험'],
+  ['A003490','대한항공','KOSPI','항공'],['A066570','LG전자','KOSPI','전자'],
+  ['A000810','삼성화재','KOSPI','보험'],['A009150','삼성전기','KOSPI','전자부품'],
+  ['A010130','고려아연','KOSPI','비철금속'],['A015760','한국전력','KOSPI','전력'],
+  ['A086280','현대글로비스','KOSPI','물류'],['A010140','삼성중공업','KOSPI','조선'],
+  ['A042660','한화오션','KOSPI','조선'],['A009540','HD한국조선해양','KOSPI','조선'],
+  ['A329180','HD현대','KOSPI','지주'],['A267250','HD현대일렉트릭','KOSPI','전기장비'],
+  ['A034220','LG디스플레이','KOSPI','디스플레이'],['A078930','GS','KOSPI','지주'],
+  ['A034730','SK','KOSPI','지주'],['A000100','유한양행','KOSPI','제약'],
+  ['A145990','삼양식품','KOSPI','식품'],['A004170','신세계','KOSPI','유통'],
+  ['A139480','이마트','KOSPI','유통'],['A009830','한화솔루션','KOSPI','화학/태양광'],
+  ['A011780','금호석유','KOSPI','화학'],['A023530','롯데쇼핑','KOSPI','유통'],
+  ['A004990','롯데지주','KOSPI','지주'],['A090430','아모레퍼시픽','KOSPI','화장품'],
+  ['A002790','아모레퍼시픽그룹','KOSPI','화장품'],['A030000','제일기획','KOSPI','광고'],
+  ['A051900','LG생활건강','KOSPI','생활용품'],['A007310','오뚜기','KOSPI','식품'],
+  ['A034020','두산에너빌리티','KOSPI','에너지/방산'],['A000150','두산','KOSPI','지주'],
+  ['A042670','두산밥캣','KOSPI','건설기계'],['A161390','한국타이어앤테크놀로지','KOSPI','타이어'],
+  ['A011170','롯데케미칼','KOSPI','화학'],['A001040','CJ','KOSPI','지주'],
+  ['A097950','CJ제일제당','KOSPI','식품'],['A000120','CJ대한통운','KOSPI','물류'],
+  ['A088350','한화생명','KOSPI','보험'],['A000880','한화','KOSPI','방산/건설'],
+  ['A016360','삼성증권','KOSPI','증권'],['A071050','한국금융지주','KOSPI','금융지주'],
+  ['A024110','기업은행','KOSPI','은행'],['A006280','녹십자','KOSPI','제약'],
+  ['A047050','포스코인터내셔널','KOSPI','상사'],['A010060','OCI홀딩스','KOSPI','화학'],
+  ['A002380','KCC','KOSPI','건자재'],['A018880','한온시스템','KOSPI','자동차부품'],
+  ['A008770','호텔신라','KOSPI','호텔/면세'],['A012750','에스원','KOSPI','보안'],
+  ['A064350','현대로템','KOSPI','방산'],['A012450','한화에어로스페이스','KOSPI','방산/항공'],
+  ['A047810','한국항공우주','KOSPI','방산'],['A004020','현대제철','KOSPI','철강'],
+  ['A003600','SK케미칼','KOSPI','화학'],['A011790','SKC','KOSPI','화학'],
+  ['A326030','SK바이오팜','KOSPI','제약'],['A302440','SK바이오사이언스','KOSPI','제약'],
+  ['A271560','오리온','KOSPI','식품'],['A001800','오리온홀딩스','KOSPI','지주'],
+  ['A007070','GS리테일','KOSPI','유통'],['A039490','키움증권','KOSPI','증권'],
+  ['A018260','삼성에스디에스','KOSPI','IT서비스'],['A032640','LG유플러스','KOSPI','통신'],
+  ['A010950','S-Oil','KOSPI','정유'],['A000020','동화약품','KOSPI','제약'],
+  ['A001230','동국제강','KOSPI','철강'],['A011200','HMM','KOSPI','해운'],
+  ['A004000','롯데정밀화학','KOSPI','화학'],['A138040','메리츠금융지주','KOSPI','금융지주'],
+  ['A316140','우리금융지주','KOSPI','금융지주'],['A086790','하나금융지주','KOSPI','금융지주'],
+  ['A000370','한화손해보험','KOSPI','보험'],['A005440','현대그린푸드','KOSPI','식품/서비스'],
+  ['A021240','코웨이','KOSPI','가전/렌탈'],['A009240','한샘','KOSPI','가구'],
+  ['A192400','쿠쿠홀딩스','KOSPI','가전'],['A006380','카프로','KOSPI','화학'],
+  ['A000990','DB하이텍','KOSPI','반도체'],['A005440','현대백화점','KOSPI','유통'],
+  // KOSDAQ
+  ['A247540','에코프로비엠','KOSDAQ','배터리소재'],['A086520','에코프로','KOSDAQ','배터리소재'],
+  ['A018290','씨젠','KOSDAQ','진단'],['A035900','JYP엔터테인먼트','KOSDAQ','엔터'],
+  ['A041510','에스엠','KOSDAQ','엔터'],['A122870','와이지엔터테인먼트','KOSDAQ','엔터'],
+  ['A263750','펄어비스','KOSDAQ','게임'],['A112040','위메이드','KOSDAQ','게임'],
+  ['A036570','엔씨소프트','KOSDAQ','게임'],['A293490','카카오게임즈','KOSDAQ','게임'],
+  ['A042700','한미반도체','KOSDAQ','반도체장비'],['A357780','솔브레인','KOSDAQ','반도체소재'],
+  ['A240810','원익IPS','KOSDAQ','반도체장비'],['A196170','알테오젠','KOSDAQ','제약/바이오'],
+  ['A048260','오스템임플란트','KOSDAQ','의료기기'],['A041830','인바디','KOSDAQ','의료기기'],
+  ['A065350','신성델타테크','KOSDAQ','전기차부품'],['A403870','HPSP','KOSDAQ','반도체장비'],
+  ['A166090','하나머티리얼즈','KOSDAQ','반도체소재'],['A237690','에스티팜','KOSDAQ','제약'],
+  ['A096530','씨에스윈드','KOSDAQ','풍력'],['A277810','레인보우로보틱스','KOSDAQ','로봇'],
+  ['A009420','한올바이오파마','KOSDAQ','제약'],['A335890','비올','KOSDAQ','미용기기'],
+  ['A214150','클래시스','KOSDAQ','미용기기'],['A323410','카카오뱅크','KOSDAQ','인터넷은행'],
+  ['A377300','카카오페이','KOSDAQ','핀테크'],['A035760','CJ ENM','KOSDAQ','미디어'],
+  ['A259960','크래프톤','KOSDAQ','게임'],['A111770','영원무역홀딩스','KOSDAQ','의류'],
+  ['A078600','대주전자재료','KOSDAQ','배터리소재'],['A336370','솔루스첨단소재','KOSDAQ','배터리소재'],
+  ['A131970','두산테스나','KOSDAQ','반도체'],['A064760','티씨케이','KOSDAQ','반도체소재'],
+  ['A314930','바텍','KOSDAQ','의료기기'],['A039200','오스코텍','KOSDAQ','제약'],
+  ['A200670','휴젤','KOSDAQ','바이오'],['A253450','스튜디오드래곤','KOSDAQ','콘텐츠'],
+  ['A950130','엑세스바이오','KOSDAQ','진단'],['A137310','에스디바이오센서','KOSDAQ','진단'],
+  ['A090270','네오위즈','KOSDAQ','게임'],['A095340','ISC','KOSDAQ','반도체'],
+  ['A236340','자이글','KOSDAQ','가전'],['A060810','블리자드엔터테인먼트','KOSDAQ','게임'],
+  ['A048410','현대바이오','KOSDAQ','제약'],['A073240','금호타이어','KOSDAQ','타이어'],
+  ['A064550','바이오니아','KOSDAQ','바이오'],['A049550','이엘피','KOSDAQ','반도체장비'],
+  ['A036620','감성코퍼레이션','KOSDAQ','의류'],['A051600','한전KPS','KOSDAQ','발전/유지보수'],
+  ['A204840','지투파워','KOSDAQ','전력'],['A085660','차바이오텍','KOSDAQ','바이오'],
+  ['A215600','신라젠','KOSDAQ','바이오'],['A290650','엘앤씨바이오','KOSDAQ','바이오'],
+  ['A362320','넥스틴','KOSDAQ','반도체장비'],['A104480','한세엠케이','KOSDAQ','의류'],
+  ['A035810','이지홀딩스','KOSDAQ','IT서비스'],['A054620','APS홀딩스','KOSDAQ','IT'],
+  ['A205100','엑스플러스','KOSDAQ','콘텐츠'],['A256840','한국비엔씨','KOSDAQ','바이오'],
+  ['A078130','국일제지','KOSDAQ','소재'],['A108490','로보티즈','KOSDAQ','로봇'],
+  ['A226340','본느','KOSDAQ','화장품'],['A222040','코스맥스비티아이','KOSDAQ','화장품'],
+  ['A052710','아모텍','KOSDAQ','전자부품'],['A100130','동국S&C','KOSDAQ','풍력'],
+  ['A140410','메지온','KOSDAQ','제약'],['A039030','이오테크닉스','KOSDAQ','레이저장비'],
+  ['A053800','안랩','KOSDAQ','보안'],['A067160','아프리카TV','KOSDAQ','미디어/플랫폼'],
+  ['A078900','GH신소재','KOSDAQ','소재'],['A094970','제이엠티','KOSDAQ','반도체'],
+  ['A060900','한국로봇','KOSDAQ','로봇'],['A263770','엔에스이엔엠','KOSDAQ','엔터'],
+  ['A209290','명문제약','KOSDAQ','제약'],['A122900','와이씨','KOSDAQ','전자부품'],
+  ['A039420','사이버로직스','KOSDAQ','IT'],['A204210','모두투어리츠','KOSDAQ','리츠'],
+];
 
-  // ① DART API 시도
-  if (S.dartKey) {
-    try {
-      const base = `${S.proxyUrl}https://opendart.fss.or.kr/api`;
-      const r = await fetch(`${base}/list.json?crtfc_key=${S.dartKey}&corp_name=${encodeURIComponent(val)}&bgn_de=20240101&end_de=20251231&page_count=5`);
-      const d = await r.json();
-      if (d.status === '000' && d.list?.length) {
-        const c = d.list[0];
-        S.co.name = c.corp_name; S.co.corpCode = c.corp_code; S.co.stockCode = c.stock_code || '';
-        showCard(c.corp_name, c.corp_code, c.stock_code || '-');
-        btn.innerHTML = '조회'; btn.disabled = false;
-        return;
-      }
-    } catch(e) {}
-  }
+let stockSelectedIdx = -1;
+let stockFilteredList = [];
 
-  // ② 네이버 금융 자동완성으로 종목코드 조회 (API 키 불필요)
-  {
-    btn.innerHTML = '<span class="btn-spin"></span> 종목코드 검색 중…';
-    const info = await lookupByGemini(val);
-    if (info) {
-      S.co.name      = info.full_name || val;
-      S.co.corpCode  = info.corp_code || '';
-      S.co.stockCode = info.stock_code || '';
-      S.co.industry  = info.industry || '';
-      S.co.market    = info.market || 'KOSPI';
-      showCard(info.full_name || val, info.corp_code || 'Gemini 조회', info.stock_code || '-');
-      // 수동 입력 필드에도 자동 채우기
-      document.getElementById('m-name').value     = info.full_name || val;
-      document.getElementById('m-stock').value    = info.stock_code || '';
-      document.getElementById('m-industry').value = info.industry || '';
-      const mkt = document.getElementById('m-market');
-      if (info.market && [...mkt.options].some(o => o.value === info.market)) mkt.value = info.market;
-      btn.innerHTML = '조회'; btn.disabled = false;
-      return;
-    }
-  }
+function onStockInput(val) {
+  const q = val.trim().toLowerCase();
+  const dd = document.getElementById('stock-dropdown');
+  if (!q) { dd.style.display='none'; return; }
 
-  // ③ 모두 실패 → 수동 입력 안내
-  const hint = '자동 조회 실패. 아래에 직접 입력하거나 <a href="https://kind.krx.co.kr" target="_blank" style="color:var(--accent);">KRX KIND</a>에서 종목코드를 확인하세요.';
-  showErr('search-err', hint);
-  toggleManual(true, val);
-  btn.innerHTML = '조회'; btn.disabled = false;
+  stockFilteredList = STOCK_DB.filter(([code, name]) => {
+    const num = code.slice(1);   // A/B 접두사 제거 후 숫자만
+    return name.toLowerCase().includes(q) || num.startsWith(q) || code.toLowerCase().startsWith(q);
+  }).slice(0, 10);
+
+  if (!stockFilteredList.length) { dd.style.display='none'; return; }
+
+  stockSelectedIdx = -1;
+  dd.innerHTML = stockFilteredList.map(([code, name, mkt, ind], i) => {
+    const numCode = code.slice(1);   // 표시용: A/B 제거
+    const isListed = code.startsWith('A');
+    return `<div onclick="selectStock(${i})"
+      style="padding:10px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);font-size:13px;"
+      onmouseover="this.style.background='var(--accent-light)'" onmouseout="this.style.background='white'">
+      <span style="font-weight:600;">${name}</span>
+      <span style="color:var(--muted);font-size:12px;">${numCode} &nbsp;·&nbsp; <span style="color:${mkt==='KOSPI'?'#2d6a4f':'#3b9ede'};font-weight:700;">${isListed ? mkt : '비상장'}</span> &nbsp;·&nbsp; ${ind}</span>
+    </div>`;
+  }).join('')
+  + `<div style="padding:6px 14px;font-size:11px;color:#bbb;background:#fafaf8;border-top:1px solid var(--border);">
+       종목DB 기준일: ${STOCK_DB_DATE} &nbsp;·&nbsp; 목록에 없으면 아래 직접 입력
+     </div>`;
+  dd.style.display = 'block';
 }
 
-async function lookupByGemini(name) {
-  // 네이버 금융 자동완성 API — API 키 불필요, CORS 없음
+function onStockKeydown(e) {
+  const dd = document.getElementById('stock-dropdown');
+  if (dd.style.display === 'none') return;
+  const items = dd.querySelectorAll('div');
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    stockSelectedIdx = Math.min(stockSelectedIdx+1, items.length-1);
+    items.forEach((el,i) => el.style.background = i===stockSelectedIdx ? 'var(--accent-light)' : 'white');
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    stockSelectedIdx = Math.max(stockSelectedIdx-1, 0);
+    items.forEach((el,i) => el.style.background = i===stockSelectedIdx ? 'var(--accent-light)' : 'white');
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (stockSelectedIdx >= 0) selectStock(stockSelectedIdx);
+    else if (stockFilteredList.length === 1) selectStock(0);
+  } else if (e.key === 'Escape') {
+    dd.style.display = 'none';
+  }
+}
+
+function selectStock(idx) {
+  const [code, name, mkt, ind] = stockFilteredList[idx];
+  const numCode  = code.slice(1);          // A/B 제거 → 실제 종목코드
+  const isListed = code.startsWith('A');
+  const market   = isListed ? (mkt || 'KOSPI') : '비상장';
+
+  document.getElementById('co-input').value = name;
+  document.getElementById('stock-dropdown').style.display = 'none';
+
+  S.co.name      = name;
+  S.co.stockCode = numCode;
+  S.co.market    = market;
+  S.co.industry  = ind;
+  S.co.corpCode  = '';
+
+  showCard(name, '—', numCode, market);
+
+  // 수동 입력 필드도 채우기
+  document.getElementById('m-name').value     = name;
+  document.getElementById('m-stock').value    = numCode;
+  document.getElementById('m-industry').value = ind;
+  const mktEl = document.getElementById('m-market');
+  if ([...mktEl.options].some(o => o.value === market)) mktEl.value = market;
+
+  // DART corp_code 보완 (백그라운드)
+  if (S.dartKey && isListed) fetchCorpCode(name);
+}
+
+async function fetchCorpCode(name) {
   try {
-    const url = `https://ac.stock.naver.com/ac?q=${encodeURIComponent(name)}&target=stock,index,etf`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('naver ' + res.status);
-    const d = await res.json();
-
-    // 응답 형식: { items: [["종목코드","기업명","시장",...], ...] }
-    const items = d?.items || [];
-    if (!items.length) return null;
-
-    // 첫 번째 결과 사용
-    const [code, fullName, market] = items[0];
-    if (!code || !fullName) return null;
-
-    // 시장 매핑
-    const mktMap = { 'KOSPI': 'KOSPI', 'KOSDAQ': 'KOSDAQ', 'KONEX': '코넥스', 'KOSDAQ GLOBAL': 'KOSDAQ' };
-    const mkt = mktMap[market] || market || 'KOSPI';
-
-    return { found: true, full_name: fullName, stock_code: code, market: mkt, industry: '' };
-  } catch(e) {
-    console.warn('네이버 금융 조회 실패:', e.message);
-    return null;
-  }
+    const base = `${S.proxyUrl}https://opendart.fss.or.kr/api`;
+    const r = await fetch(`${base}/list.json?crtfc_key=${S.dartKey}&corp_name=${encodeURIComponent(name)}&bgn_de=20240101&end_de=20251231&page_count=3`);
+    const d = await r.json();
+    if (d.status === '000' && d.list?.length) {
+      S.co.corpCode = d.list[0].corp_code;
+      document.getElementById('m-corpcode').value = S.co.corpCode;
+    }
+  } catch(e) {}
 }
+
+// 드롭다운 외부 클릭 시 닫기
+document.addEventListener('click', e => {
+  if (!e.target.closest('#co-input') && !e.target.closest('#stock-dropdown'))
+    document.getElementById('stock-dropdown').style.display = 'none';
+});
+
+// ══════════════════════════════════════════════
+// STEP 1 — COMPANY (기존 doSearch 단순화)
+// ══════════════════════════════════════════════
+async function doSearch() { /* 자동완성으로 대체됨 */ }
+async function lookupByGemini() { return null; }
 
 function showCard(name, code, stock, market) {
   document.getElementById('co-card').classList.add('show');
   document.getElementById('co-name-disp').textContent = name;
   const mktStr = market ? ` | ${market}` : '';
-  document.getElementById('co-meta-disp').textContent = `종목코드: ${stock}${mktStr} | 기업코드(DART): ${code}`;
+  document.getElementById('co-meta-disp').innerHTML =
+    `종목코드: ${stock}${mktStr} | 기업코드(DART): ${code}`
+    + `<span style="margin-left:10px;font-size:11px;color:#bbb;">종목DB 기준일: ${STOCK_DB_DATE}</span>`;
   document.getElementById('manual-section').style.display = 'none';
 }
 
@@ -1569,23 +1706,219 @@ function clearNews() {
   document.getElementById('news-btn').innerHTML = '🔍 뉴스 검색';
 }
 
+// ══ 블로그용 프롬프트 ══
+// ══ 보고서 유형 (블로그용 / 심사용) ══
+let reportMode = 'blog';
+
+function buildBlogPrompt(rtype, styleGuide, commonHeader) {
+  return `당신은 공인회계사(CPA)이자 금융 칼럼니스트입니다.
+아래 기업 정보·재무 데이터·뉴스 이슈를 바탕으로 ${rtype} 초안을 한국어로 작성하세요.
+${styleGuide}
+${commonHeader}
+
+══════════════════════════════════
+[독자 수준 — 반드시 준수]
+══════════════════════════════════
+독자는 투자 경험은 있지만 금융 전문가가 아닌 일반 투자자입니다.
+✅ 전문용어 즉시 괄호로 쉬운 말 병기 / 수치마다 "좋은 건지 나쁜 건지" 한 줄 평가 / 비유·예시 적극 활용
+❌ 설명 없는 약어 단독 사용 금지 / 딱딱한 기관 문체 과다 사용 금지 / 재무 섹션 외 과도한 불릿 나열 금지
+
+══════════════════════════════════
+[HTML 작성 규칙]
+══════════════════════════════════
+① 순수 HTML만 반환. 마크다운 코드블록 금지.
+② h2: <h2 style="border-left:4px solid #111111;padding-left:12px;margin:32px 0 14px;font-size:17px;font-weight:700;">
+③ h3: <h3 style="font-size:14px;margin:20px 0 8px;font-weight:700;color:#1a1a1a;">
+④ 소섹션 첫 문단: <p style="margin:10px 0;line-height:1.8;"><strong>핵심 1~2문장.</strong> 보조 설명.</p>
+⑤ 불릿: <p style="margin:6px 0;padding-left:4px;line-height:1.8;">▪ 내용</p> (HTML ul 금지)
+⑥ 재무표 헤더: background:#111111;color:white / td border:1px solid #e0ddd6
+⑦ SVG 차트: viewBox="0 0 560 240", 실적 막대 #111111, 전망 #aaaaaa, 전망구간 #f8f7f4 배경, 전망연도 "24F" 형식
+⑧ 소결론: <h3>소결론</h3><div style="background:#f5f4f0;border-left:4px solid #b8955a;padding:14px 18px;border-radius:0 6px 6px 0;margin:14px 0;line-height:1.8;">내용</div>
+⑨ Source: <p style="font-size:11px;color:#888;margin-top:4px;">Source: ○○</p>
+
+══════════════════════════════════
+[보고서 구성]
+══════════════════════════════════
+
+<h2>I. 기업 개요</h2>
+일반인 눈높이 · 전문용어 쉬운 말 병기 · 3~4문단 · ▪ 불릿 금지 · 긴 연혁 목록 금지
+
+<h2>II. 사업 현황 및 시장 환경</h2>
+[시장 차트] web_search로 시장규모·성장률 검색 → SVG 막대차트 생성 (못 찾으면 텍스트만)
+[경쟁력] ▪ 불릿 3~5개 · 쉬운 말 · 경쟁사 비교표 금지
+
+<h2>III. 최근 주요 이슈 분석</h2>
+${buildNewsSection()}
+
+<h2>IV. 재무 현황 분석</h2>
+4.1 매출 및 수익성 → 표(5개년${qtrLabel?'+'+qtrLabel:''}) + ▪ 분석
+4.2 현금흐름 건전성 → 표 + FCF + ▪ 분석
+4.3 재무안전성 → 표(Net Debt/EBITDA·부채비율 포함) + ▪ 분석
+소결론 → 소결론 박스 (일반인 언어로)
+
+<h2>V. 기업가치평가 — 유사상장기업 비교법</h2>
+${S.co.market && S.co.market !== '비상장' ? '5.1 주가 현황 →' : ''} 유사기업 비교표 + 적정가치 산정 + 소결론 박스
+
+<h2>VI. 주요 리스크 요인</h2>
+6.1 사업 / 6.2 재무 / 6.3 외부환경 — 각 ▪ 2~3개, 영향도(상/중/하)
+
+<h2>VII. 종합 의견</h2>
+긍·부정 요인 ▪ 각 2~4개 → 종합판단 콜아웃 박스 → 모니터링 포인트 ▪ 3~5개`;
+}
+
+// ══ 심사용 프롬프트 ══
+function buildReviewPrompt(rtype, styleGuide, commonHeader) {
+  return `당신은 국내 대형 증권사 투자금융본부의 공인회계사(CPA) 심사역입니다.
+아래 기업 정보·재무 데이터를 바탕으로 기관 내부 ${rtype} 초안을 한국어로 작성하세요.
+${styleGuide}
+${commonHeader}
+
+══════════════════════════════════
+[독자 및 문체 — 반드시 준수]
+══════════════════════════════════
+독자는 투자심사위원회 및 리스크관리협의회입니다.
+✅ 기관 심사보고서 문체 ("~라고 판단됨", "~로 예상됨", "~에 해당") 
+✅ 전문 금융·회계 용어 그대로 사용 (EV/EBITDA, LTV, Net Debt, CAPEX, FCF 등)
+✅ 각 소섹션 첫 1~2문장 굵게(bold) 핵심 결론 선언 → 이후 ▪ 불릿으로 상세 근거
+✅ 수치는 억원 단위, YoY 증감률·배수(x배) 함께 표기
+✅ 소결론(소결 박스)은 각 주요 섹션 말미에 반드시 작성
+❌ 쉬운 말 병기 불필요 / SVG 차트 생성 금지 (표로만 표현) / 일반인 눈높이 설명 금지
+
+══════════════════════════════════
+[HTML 작성 규칙]
+══════════════════════════════════
+① 순수 HTML만 반환. 마크다운 코드블록 금지.
+② h2: <h2 style="border-left:4px solid #111111;padding-left:12px;margin:32px 0 14px;font-size:17px;font-weight:700;">
+③ h3: <h3 style="font-size:14px;margin:20px 0 8px;font-weight:700;color:#1a1a1a;">
+④ 소섹션 첫 문단: <p style="margin:10px 0;line-height:1.8;"><strong>굵은 핵심 결론.</strong> 보조 서술.</p>
+⑤ 불릿: <p style="margin:6px 0;padding-left:4px;line-height:1.8;">▪ 내용</p>
+⑥ 재무표: thead background:#111111;color:white / td border:1px solid #e0ddd6 / YoY열 포함
+⑦ 경쟁사 비교표: 경쟁력 항목별 HIGH/MEDIUM/LOW 평가
+⑧ 소결론 박스: <h3 style="font-size:14px;margin:20px 0 8px;font-weight:700;">소결론</h3><div style="background:#f5f4f0;border-left:4px solid #b8955a;padding:14px 18px;border-radius:0 6px 6px 0;margin:14px 0;line-height:1.8;">내용</div>
+⑨ Source: <p style="font-size:11px;color:#888;margin-top:4px;">Source: ○○</p>
+
+══════════════════════════════════
+[보고서 구성 — 심사보고서 양식]
+══════════════════════════════════
+
+<h2>I. 기업 개요</h2>
+기업규모·상장시장·업종·신용등급·주요사업·설립연도·종업원수
+주요 연혁 5~8개 (연도별 ▪ 불릿)
+지배구조 서술 (최대주주·특수관계인 지분율)
+
+<h2>II. 사업 리스크 검토</h2>
+
+<h3>2.1 주요 제품 및 시장 지위</h3>
+볼드 선언 → 주요 제품·매출구성·글로벌/국내 시장점유율·순위
+시장 현황 표 (연도별 시장규모·성장률)
+Source 표기 필수
+
+<h3>2.2 경쟁사 대비 경쟁력 비교</h3>
+볼드 선언 → 경쟁력 항목별 비교표 (원가경쟁력·기술력·제품순도·원재료안정성 등)
+주요 경쟁사별 HIGH/MEDIUM/LOW 평가
+경쟁사 영업이익률 비교 포함
+Source: 업계 자료, 사업보고서
+
+<h3>2.3 시장 위험 검토</h3>
+볼드 선언 → 수요 구조·성장 전망·가격 변동성·지역별 익스포저
+시장 전망 수치 표 (전망연도 포함)
+주요 리스크 요인 ▪ 불릿
+
+<h3>2.4 신사업 검토</h3>
+(해당 시) 신사업 투자 현황·CAPEX 계획·성장 가능성·불확실성
+CAPEX 계획 표 (연도별)
+
+<h2>III. 신용위험 검토</h2>
+
+<h3>3.1 매출 및 수익성 검토</h3>
+볼드 선언 (매출·EBITDA 추이 핵심)
+손익 요약 표:
+  항목: 매출액, 매출총이익(%), EBITDA(%), 영업이익(%), 당기순이익(%)
+  컬럼: ${[...S.fin.years].reverse().map(y=>y+'년').join(' / ')}${qtrLabel ? ' / ' + qtrLabel : ''} / YoY
+  Source: DART 사업보고서
+원재료비 부담 분석 (매출액 대비 원재료비 %)
+▪ 불릿 3~5개: 매출 증감 원인·마진 변화·구조적 요인
+
+<h3>3.2 현금흐름 건전성 검토</h3>
+볼드 선언 (영업CF·FCF 핵심)
+현금흐름 요약 표:
+  항목: 영업활동CF, EBITDA, 순운전자본 변동, 재고자산 증감, 투자활동CF, CAPEX, 종속기업투자, 재무활동CF, FCF
+  컬럼: 5개년 + YoY
+  Source: DART 사업보고서
+재고자산 회전기일·매입채무 회전기일 추이 표
+▪ 불릿: CAPEX 부담·배당·자사주·잉여현금흐름 우하향 여부
+
+<h3>3.3 재무안전성 검토</h3>
+볼드 선언 (부채비율·Net Debt/EBITDA 핵심)
+재무상태 요약 표:
+  항목: 총자산, 현금및금융자산, 재고자산, 차입부채(단기/장기), 총자본, 순차입금, Net Debt/EBITDA, 부채비율, 단기차입부채비율, 차입금의존도
+  컬럼: 5개년 + YoY
+  Source: DART 사업보고서
+차입부채 세부내역 표 (금리·만기·금액)
+▪ 불릿: 차입 구조·유동성·상환 능력
+
+<h3>소결론</h3>
+소결론 박스: 수익성·현금흐름·재무안전성 종합 신용위험 평가 (외부등급 언급 시 포함)
+
+<h2>IV. Valuation 검토</h2>
+
+${S.co.market && S.co.market !== '비상장' ? `<h3>4.1 주가 현황</h3>
+볼드 선언 (주가 흐름·시가총액 핵심)
+주요 주가 이벤트 ▪ 불릿
+현재 EV/EBITDA·PER 수준 언급` : ''}
+
+<h3>${S.co.market && S.co.market !== '비상장' ? '4.2' : '4.1'} 상대가치 비교법 (유사상장기업 비교법, Trading Multiple)</h3>
+볼드 선언 (유사기업 Multiple 대비 대상회사 수준 핵심)
+유사상장기업 비교표:
+  컬럼: 기업명, 국가/시장, 시가총액, Net Debt, EV, EBITDA, 순이익, EV/EBITDA, PER, 비고
+  마지막 행: 중간값 / 평균값
+  Source: KRX, Bloomberg 등
+▪ 유사기업 선정 기준·할인/할증 요인 분석
+적정가치 산정 (EV/EBITDA·PER 각각, 중간값 및 프리미엄/디스카운트 적용)
+
+<h3>소결론</h3>
+소결론 박스: 현재 시장가 대비 적정가치 범위·할인/할증 판단 (LTV 언급 가능 시)
+
+<h2>V. 주요 리스크 요인</h2>
+5.1 사업 리스크 ▪ 2~3개 (영향도 상/중/하)
+5.2 재무 리스크 ▪ 2~3개
+5.3 외부환경 리스크 ▪ 2~3개
+각 리스크별 대응 가능성 서술
+
+<h2>VI. 종합 리스크 검토의견</h2>
+볼드 선언 (긍정 요인·부정 요인 각각 핵심 1~2문장)
+긍정적 요인 ▪ 3~5개 (제목 굵게)
+부정적 요인 ▪ 3~5개 (제목 굵게)
+종합 판단 콜아웃 박스:
+<div style="background:#f5f4f0;border-left:4px solid #b8955a;padding:14px 18px;border-radius:0 6px 6px 0;margin:14px 0;line-height:1.8;">
+긍·부정 종합 최종 판단 및 권고 사항. "~라고 판단됨" 문체.
+</div>
+주요 모니터링 포인트 ▪ 3~5개`;
+}
+
+function buildNewsSection() {
+  const news = buildNewsSummary();
+  if (!news) return `<p style="color:#888;font-size:12px;">[뉴스 이슈 미입력]</p>`;
+  if (news.startsWith('[ISSUE_SKIP]')) return `<p style="font-size:12px;color:#aaa;font-style:italic;">[이번 분기 주목할 신규 이슈 없음]</p>`;
+  return `Gemini 뉴스 데이터 기반 · 기사 내용만 서술 · 추측 금지
+h3 소제목 + ① 볼드 선언 ② ▪ 경위·수치 ③ ▪ 영향 ④ ▪ 향후 포인트 + Source 표기`;
+}
+
 async function generateDraft() {
   if (!S.claudeKey) { alert('설정에서 Claude API 키를 입력하세요.'); openSettings(); return; }
 
   const btn = document.getElementById('gen-btn');
   btn.innerHTML = '<span class="btn-spin"></span> 생성 중…'; btn.disabled = true;
 
-  const fin = buildFinSummary();
+  const fin  = buildFinSummary();
   const comps = buildCompsSummary();
-  const news = buildNewsSummary();
-  const styleGuide = buildStyleGuide();   // ← 누적 학습 패턴
+  const news  = buildNewsSummary();
+  const styleGuide = buildStyleGuide();
   const rtype = document.getElementById('rpt-type').value;
   const tplTxt = S.templates.map(t=>t.content).join('\n\n---\n\n').substring(0, 2000);
   const yrs = S.fin.years;
 
-  const prompt = `당신은 공인회계사(CPA)이자 금융 칼럼니스트입니다.
-아래 기업 정보·재무 데이터·뉴스 이슈를 바탕으로 ${rtype} 초안을 한국어로 작성하세요.
-${styleGuide}
+  const commonHeader = `
 [기업 정보]
 기업명: ${S.co.name}
 ${S.co.market ? '상장시장: ' + S.co.market : ''}
@@ -1600,216 +1933,16 @@ ${news || ''}
 
 ${comps || ''}
 
-${tplTxt ? '[참고 템플릿]\n' + tplTxt : ''}
+${tplTxt ? '[참고 템플릿]\n' + tplTxt : ''}`;
 
-══════════════════════════════════
-[독자 수준 — 반드시 준수]
-══════════════════════════════════
+  const prompt = reportMode === 'review'
+    ? buildReviewPrompt(rtype, styleGuide, commonHeader)
+    : buildBlogPrompt(rtype, styleGuide, commonHeader);
 
-이 보고서의 독자는 주식투자 경험은 있지만 금융 전문가가 아닌 일반 투자자입니다.
-
-✅ 해야 할 것
-- 전문용어가 나오면 즉시 괄호로 쉬운 말 병기
-  예) "EBITDA(이자·세금·감가상각 차감 전 이익, 쉽게 말해 회사가 영업으로 번 현금에 가까운 지표)"
-  예) "부채비율(빌린 돈÷내 돈 × 100, 낮을수록 재무 건전)"
-- 수치는 맥락과 함께 제시 — 숫자만 나열하지 말고 "이게 좋은 건지 나쁜 건지" 한 문장으로 평가
-- 비유·예시를 적극 활용해 개념 설명
-- 문장은 짧고 읽기 쉽게
-- 재무 섹션(IV)은 전문적으로 작성해도 되나, 각 소결론은 일반인 언어로 마무리
-
-❌ 하지 말 것
-- 설명 없이 약어만 사용 (ROE, PBR 등 단독 사용 금지)
-- "~라고 판단됨" 같은 딱딱한 기관 문체 과다 사용
-- 복잡한 표를 과도하게 중첩
-- 재무 섹션 외에서 ▪ 불릿을 과도하게 나열
-
-══════════════════════════════════
-[HTML 작성 규칙 — 반드시 준수]
-══════════════════════════════════
-
-① 순수 HTML만 반환. 마크다운 코드블록 금지.
-
-② 섹션 제목(h2):
-<h2 style="border-left:4px solid #111111;padding-left:12px;margin:32px 0 14px;font-size:17px;font-weight:700;">I. 제목</h2>
-
-③ 소섹션 제목(h3):
-<h3 style="font-size:14px;margin:20px 0 8px;font-weight:700;color:#1a1a1a;">1.1 소제목</h3>
-
-④ 각 소섹션 첫 문단 — 핵심 결론을 굵게 선언, 이후 세부 서술:
-<p style="margin:10px 0;line-height:1.8;"><strong>핵심 내용 요약 1~2문장.</strong> 보조 설명이 이어진다.</p>
-
-⑤ 분석 상세 — ▪ 불릿 스타일 (HTML ul 사용 금지):
-<p style="margin:6px 0;padding-left:4px;line-height:1.8;">▪ 분석 내용</p>
-
-⑥ 재무 수치 표:
-<table style="width:100%;border-collapse:collapse;margin:14px 0;font-size:13px;">
-  <thead><tr style="background:#111111;color:white;">
-    <th style="padding:8px 12px;text-align:left;">항목</th>
-    <th style="padding:8px 12px;text-align:right;">${[...S.fin.years].reverse()[0]}년</th>
-    <th style="padding:8px 12px;text-align:right;">…</th>
-    <th style="padding:8px 12px;text-align:right;">${S.co.year}년</th>
-  </tr></thead>
-  <tbody>
-    <tr><td style="padding:7px 12px;border-bottom:1px solid #e0ddd6;">항목명</td>
-        <td style="padding:7px 12px;border-bottom:1px solid #e0ddd6;text-align:right;">값</td></tr>
-  </tbody>
-</table>
-<p style="font-size:11px;color:#888;margin-top:4px;">Source: DART 사업보고서</p>
-
-⑦ SVG 막대차트 — 업로드된 심사보고서 스타일 그대로 적용:
-
-규칙:
-- viewBox="0 0 560 240", width:100%, max-width:560px
-- 배경: 흰색 (rect fill="#ffffff")
-- 제목: x="280" y="20", text-anchor="middle", font-size="13", font-weight="700", fill="#1a1a1a"
-- 막대 색상: 실적 #111111, 전망(F) #aaaaaa
-- 막대 위 값 레이블: font-size="11", fill="#1a1a1a", text-anchor="middle"
-- x축 연도 레이블: font-size="11", fill="#555", text-anchor="middle"
-  전망 연도는 "24F" 형식으로 표기
-- y축 없음 (깔끔하게 막대만 표시)
-- 단위는 제목 오른쪽에 소괄호로 표기: "(단위: 조원)" 또는 "(단위: %)"
-- 전망 구간이 있으면 배경 rect fill="#f8f7f4" 로 음영 표시
-- Source는 SVG 밖 <p style="font-size:11px;color:#888;margin-top:4px;">Source: [출처]</p>
-
-예시 (실제 검색 수치로 채울 것):
-<figure style="margin:18px 0;">
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 240" style="width:100%;max-width:560px;display:block;">
-  <rect width="560" height="240" fill="#ffffff"/>
-  <!-- 전망 구간 배경 -->
-  <rect x="340" y="30" width="220" height="170" fill="#f8f7f4"/>
-  <!-- 제목 -->
-  <text x="280" y="20" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">글로벌 시장 규모 현황 및 전망 (단위: 조원)</text>
-  <!-- 막대 (실적) -->
-  <rect x="40" y="100" width="40" height="100" fill="#111111"/>
-  <text x="60" y="95" text-anchor="middle" font-size="11" fill="#1a1a1a">10.2</text>
-  <text x="60" y="215" text-anchor="middle" font-size="11" fill="#555">2020</text>
-  <!-- 막대 (전망) -->
-  <rect x="370" y="60" width="40" height="140" fill="#aaaaaa"/>
-  <text x="390" y="55" text-anchor="middle" font-size="11" fill="#1a1a1a">14.5</text>
-  <text x="390" y="215" text-anchor="middle" font-size="11" fill="#555">24F</text>
-  <!-- 구분선 -->
-  <line x1="0" y1="200" x2="560" y2="200" stroke="#e0ddd6" stroke-width="1"/>
-</svg>
-<p style="font-size:11px;color:#888;margin-top:4px;">Source: [검색된 출처]</p>
-</figure>
-
-⑧ 소결론 박스:
-<h3 style="font-size:14px;margin:20px 0 8px;font-weight:700;color:#1a1a1a;">소결론</h3>
-<div style="background:#f5f4f0;border-left:4px solid #b8955a;padding:14px 18px;border-radius:0 6px 6px 0;margin:14px 0;line-height:1.8;">
-판단 서술 (일반 투자자가 이해할 수 있는 언어로 마무리)
-</div>
-
-⑨ Source: <p style="font-size:11px;color:#888;margin-top:4px;">Source: ○○</p>
-
-══════════════════════════════════
-[보고서 구성 — 아래 순서·제목 그대로 사용]
-══════════════════════════════════
-
-<h2>I. 기업 개요</h2>
-- 투자 경험이 없는 일반인도 이해할 수 있는 쉬운 말로 작성
-- 업계 전문 용어가 나오면 반드시 괄호 안에 쉬운 설명 병기
-  예) "아연 제련업체 (아연 원석을 녹여 순수한 금속으로 만드는 회사)"
-- ① 이 회사가 무슨 일을 하는지 ② 어떻게 돈을 버는지 ③ 얼마나 큰 회사인지
-- 3~4문단, 자연스러운 문장으로 서술. 긴 연혁 목록·▪ 불릿 금지.
-
-<h2>II. 사업 현황 및 시장 환경</h2>
-
-[시장 규모·성장률 차트]
-web_search 도구로 "${S.co.name} 시장규모 전망 성장률 TAM" 등을 검색해
-연도별 수치(시장 규모, CAGR)를 확인하고 아래 형식으로 SVG 막대차트를 생성하세요.
-수치를 찾지 못하면 차트 없이 텍스트로만 서술합니다.
-
-SVG 차트 예시 형식 (실제 검색된 수치로 채울 것):
-<figure style="margin:16px 0;">
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 200" style="width:100%;max-width:540px;display:block;">
-    <!-- 막대, 수치 레이블, x축 연도 레이블 포함 -->
-    <!-- 막대 색상: #111111(과거), #b8955a(전망) -->
-  </svg>
-  <figcaption style="font-size:11px;color:#888;margin-top:4px;">Source: [검색 출처] / 단위: [단위]</figcaption>
-</figure>
-
-[업계 내 경쟁력 및 평판]
-- 일반 투자자가 이해할 수 있는 쉬운 언어로 작성
-- ▪ 불릿 3~5개: 이 기업이 업계에서 어떻게 인정받는지, 경쟁사 대비 강점
-- 복잡한 경쟁사 비교표 생성 금지
-
-<h2>III. 최근 주요 이슈 분석</h2>
-${news.startsWith('[ISSUE_SKIP]')
-  ? `<!-- 이슈 생략 판정: ${news} -->
-<p style="font-size:12px;color:#aaa;font-style:italic;">[이번 분기 주목할 신규 이슈 없음]</p>`
-  : news
-    ? `아래 이슈 데이터를 바탕으로 작성. 기사 내용 외 추측 금지.
-h3 소제목: 이슈 제목
-① 볼드 선언 문장: 이슈 핵심 1문장 (전문용어는 쉬운 말로 풀어서)
-② ▪ 불릿: 사건 경위·주요 수치 (기사 기반)
-③ ▪ 불릿: 재무·주가·사업적 영향
-④ ▪ 불릿: 향후 주목 포인트
-Source 표기 필수`
-    : `<p style="color:#888;font-size:12px;">[뉴스 이슈 미입력]</p>`}
-
-<h2>IV. 재무 현황 분석</h2>
-
-<h3>4.1 매출 및 수익성 검토</h3>
-① 볼드 선언 문장으로 시작 (매출·이익 추이 핵심 1문장)
-② 손익 요약 표:
-   항목: 매출액, 매출총이익(%), EBITDA(%), 영업이익(%), 당기순이익(%)
-   컬럼: ${[...S.fin.years].reverse().map(y=>y+'년').join(', ')}${qtrLabel ? ', ' + qtrLabel : ''}
-   Source: DART 사업보고서
-③ ▪ 불릿: 매출 증감 주요 원인 분석
-④ ▪ 불릿: 마진율 변화 요인 분석
-⑤ ▪ 불릿: 사업부문별 수익성 차이 (데이터 있을 경우)
-
-<h3>4.2 현금흐름 건전성 검토</h3>
-① 볼드 선언 문장으로 시작
-② 현금흐름 요약 표:
-   항목: 영업활동CF, EBITDA, 순운전자본 변동, 재고자산 증감, 투자활동CF, CAPEX, 재무활동CF
-   Source: DART 사업보고서
-③ FCF(영업CF - CAPEX) 계산 및 추이 서술
-④ ▪ 불릿: 순운전자본 변동 분석
-⑤ ▪ 불릿: CAPEX 부담 수준 평가
-⑥ ▪ 불릿: 배당·자사주·차입 등 자본 배분 패턴
-
-<h3>4.3 재무안전성 검토</h3>
-① 볼드 선언 문장으로 시작
-② 재무상태 요약 표:
-   항목: 총자산, 현금및금융자산, 재고자산, 차입부채(단기/장기), 총자본, 순차입금, Net Debt/EBITDA, 부채비율, 차입금의존도
-   Source: DART 사업보고서
-③ ▪ 불릿: 차입부채 구성 및 상환 구조
-④ ▪ 불릿: 재무 건전성 강점 또는 악화 요인
-
-<h3>소결론</h3>
-→ 소결론 박스: 수익성·현금흐름·재무안전성을 종합하여 신용위험 수준 판단
-
-<h2>V. 기업가치평가 — 유사상장기업 비교법</h2>
-
-${S.co.market && S.co.market !== '비상장'
-  ? `<h3>5.1 주가 현황</h3>
-① 볼드 선언 문장 (최근 주가 흐름 핵심 서술)
-② ▪ 불릿: 주가 변동 주요 이벤트
-③ ▪ 불릿: 현재 시가총액 수준
-
-<h3>5.2 상대가치 비교법 (Trading Multiple)</h3>`
-  : `<h3>5.1 상대가치 비교법 (Trading Multiple)</h3>`}
-
-${comps
-  ? `① 볼드 선언 문장: 유사기업 EV/EBITDA 중간값과 대상회사 비교 핵심
-② 유사상장기업 비교표 (컬럼: 기업명, 국가/시장, 시가총액, Net Debt, EV, EBITDA, 순이익, EV/EBITDA, P/E, P/B, 마지막 행: 중간값/평균값)
-   Source: KRX, Bloomberg 또는 각국 거래소 기준
-③ ▪ 불릿: 유사기업 선정 기준 및 할인/할증 요인
-④ 적정가치 산정 (EV/EBITDA·P/E 기준, 중간값 적용)
-
-<h3>소결론</h3>
-→ 소결론 박스: 적정가치 범위 및 현재 주가 대비 상승여력`
-  : `<p style="color:#888;font-size:13px;">[유사상장기업 미입력 — 2단계 유사상장기업 탭에서 입력 후 재생성 권장]</p>`}
-
-<h2>VI. 주요 리스크 요인</h2>
-<h3>6.1 사업 리스크</h3> ▪ 불릿 × 2~3개 (경쟁·시장·기술, 영향도 표기)
-<h3>6.2 재무 리스크</h3> ▪ 불릿 × 2~3개 (레버리지·유동성·금리·환율)
-<h3>6.3 외부 환경 리스크</h3> ▪ 불릿 × 2~3개 (규제·거시경제·지정학)
-
-<h2>VII. 종합 의견</h2>
-① 볼드 선언 문장 ② 긍정 요인 ▪ × 2~4개 ③ 부정 요인 ▪ × 2~4개
-④ 종합 판단 콜아웃 박스 ⑤ 모니터링 포인트 ▪ × 3~5개`;
+  // 심사용은 web_search 불필요, 블로그용만 시장 데이터 검색
+  const tools = reportMode === 'blog'
+    ? [{ type: 'web_search_20250305', name: 'web_search' }]
+    : [];
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -1823,12 +1956,11 @@ ${comps
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 5000,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        ...(tools.length ? { tools } : {}),
         messages: [{ role:'user', content: prompt }]
       })
     });
     const d = await res.json();
-    // web_search 사용 시 content 블록이 여러 개 → text 블록만 합산
     const html = (d.content || [])
       .filter(b => b.type === 'text')
       .map(b => b.text)
