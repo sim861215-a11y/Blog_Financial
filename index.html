@@ -521,8 +521,15 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
     </div>
 
     <div class="field">
-      <label>CORS 프록시 URL <span style="font-weight:400;">(GitHub Pages 배포 시 필요할 수 있음)</span></label>
-      <input type="text" id="proxy-url" placeholder="https://corsproxy.io/?  (선택사항)">
+      <label>CORS 프록시 URL <span style="font-weight:400;">(GitHub Pages 배포 시 필요 · 로컬 실행 시 불필요)</span></label>
+      <select id="proxy-select" onchange="onProxySelect(this.value)" style="margin-bottom:6px;">
+        <option value="">직접 입력</option>
+        <option value="https://api.allorigins.win/raw?url=">allorigins (권장)</option>
+        <option value="https://corsproxy.io/?">corsproxy.io</option>
+        <option value="https://thingproxy.freeboard.io/fetch/">thingproxy</option>
+      </select>
+      <input type="text" id="proxy-url" placeholder="https://api.allorigins.win/raw?url=">
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;">DART 조회가 안 될 때 <b>allorigins</b>를 먼저 선택해보세요.</div>
       <div style="font-size:11px;color:var(--muted);margin-top:4px;">로컬 실행 시에는 대부분 불필요합니다.</div>
     </div>
 
@@ -800,15 +807,18 @@ function selectStock(idx) {
 }
 
 async function fetchCorpCode(name) {
+  if (!S.dartKey || !name) return;
   try {
-    const base = `${S.proxyUrl}https://opendart.fss.or.kr/api`;
-    const r = await fetch(`${base}/list.json?crtfc_key=${S.dartKey}&corp_name=${encodeURIComponent(name)}&bgn_de=20240101&end_de=20251231&page_count=3`);
+    const r = await dartFetch('list.json', {
+      corp_name: name, bgn_de: '20150101', end_de: '20261231', page_count: '5'
+    });
     const d = await r.json();
     if (d.status === '000' && d.list?.length) {
       S.co.corpCode = d.list[0].corp_code;
-      document.getElementById('m-corpcode').value = S.co.corpCode;
+      const el = document.getElementById('m-corpcode');
+      if (el) el.value = S.co.corpCode;
     }
-  } catch(e) {}
+  } catch(e) { console.warn('fetchCorpCode 실패:', e.message); }
 }
 
 // 드롭다운 외부 클릭 시 닫기
@@ -921,27 +931,24 @@ async function initStep2() {
     const base  = `${proxy}https://opendart.fss.or.kr/api`;
     finData = {};
 
-    // ① corp_code가 없으면 기업명으로 먼저 조회
     if (!S.co.corpCode && S.co.name) {
-      showErr('dart-err', `corp_code 조회 중…`);
+      showErr('dart-err', 'DART corp_code 조회 중…');
       try {
-        const r = await fetch(`${base}/list.json?crtfc_key=${S.dartKey}&corp_name=${encodeURIComponent(S.co.name)}&bgn_de=20240101&end_de=20251231&page_count=5`);
+        const r = await dartFetch('list.json', {
+          corp_name: S.co.name, bgn_de: '20150101', end_de: '20261231', page_count: '5'
+        });
         const d = await r.json();
         if (d.status === '000' && d.list?.length) {
           S.co.corpCode = d.list[0].corp_code;
           if (!S.co.stockCode && d.list[0].stock_code) S.co.stockCode = d.list[0].stock_code;
           hideErr('dart-err');
         } else {
-          showErr('dart-err', `corp_code 자동 조회 실패 (${d.message || d.status}). 표에 직접 입력해주세요.`);
-          finData = {};
-          renderAll({}, S.fin.years);
-          return;
+          showErr('dart-err', `corp_code 조회 실패 (${d.message || d.status}). 아래 직접 입력란에 8자리 기업코드를 입력해주세요.`);
+          finData = {}; renderAll({}, S.fin.years); return;
         }
       } catch(e) {
-        showErr('dart-err', `corp_code 조회 오류: ${e.message}`);
-        finData = {};
-        renderAll({}, S.fin.years);
-        return;
+        showErr('dart-err', `DART 연결 오류: ${e.message} — 프록시 설정을 확인하세요.`);
+        finData = {}; renderAll({}, S.fin.years); return;
       }
     }
 
@@ -952,10 +959,11 @@ async function initStep2() {
       return;
     }
 
-    // ② 5개년 연간 병렬 조회
     await Promise.all(S.fin.years.map(async yr => {
       try {
-        const r = await fetch(`${base}/fnlttSinglAcnt.json?crtfc_key=${S.dartKey}&corp_code=${S.co.corpCode}&bsns_year=${yr}&reprt_code=11011`);
+        const r = await dartFetch('fnlttSinglAcnt.json', {
+          corp_code: S.co.corpCode, bsns_year: yr, reprt_code: '11011'
+        });
         const d = await r.json();
         finData[yr] = (d.status === '000' && d.list) ? d.list : [];
       } catch(e) { finData[yr] = []; }
@@ -970,12 +978,12 @@ async function initStep2() {
     ];
     for (const c of qtrCandidates) {
       try {
-        const r = await fetch(`${base}/fnlttSinglAcnt.json?crtfc_key=${S.dartKey}&corp_code=${S.co.corpCode}&bsns_year=${c.yr}&reprt_code=${c.code}`);
+        const r = await dartFetch('fnlttSinglAcnt.json', {
+          corp_code: S.co.corpCode, bsns_year: c.yr, reprt_code: c.code
+        });
         const d = await r.json();
         if (d.status === '000' && d.list?.length) {
-          qtrData  = d.list;
-          qtrLabel = c.lbl;
-          break;
+          qtrData = d.list; qtrLabel = c.lbl; break;
         }
       } catch(e) {}
     }
@@ -1739,7 +1747,20 @@ function clearNews() {
 }
 
 // ══ 블로그용 프롬프트 ══
-// ══ 보고서 유형 (블로그용 / 심사용) ══
+// DART API fetch 헬퍼 — 프록시 방식 자동 처리
+async function dartFetch(endpoint, params) {
+  const qs = new URLSearchParams({ crtfc_key: S.dartKey, ...params }).toString();
+  const targetUrl = `https://opendart.fss.or.kr/api/${endpoint}?${qs}`;
+
+  if (!S.proxyUrl) return fetch(targetUrl);
+
+  // allorigins 계열: URL 인코딩 필요
+  if (S.proxyUrl.includes('allorigins') || S.proxyUrl.includes('?url=')) {
+    return fetch(S.proxyUrl + encodeURIComponent(targetUrl));
+  }
+  // corsproxy 계열: 직접 이어붙이기
+  return fetch(S.proxyUrl + targetUrl);
+}
 let reportMode = 'blog';
 
 function buildBlogPrompt(rtype, styleGuide, commonHeader) {
@@ -2272,11 +2293,19 @@ function clearLearnedPatterns() {
 // ══════════════════════════════════════════════
 // SETTINGS MODAL
 // ══════════════════════════════════════════════
+function onProxySelect(val) {
+  if (val) document.getElementById('proxy-url').value = val;
+}
+
 function openSettings() {
-  document.getElementById('dart-key').value = S.dartKey;
+  document.getElementById('dart-key').value   = S.dartKey;
   document.getElementById('claude-key').value = S.claudeKey;
   document.getElementById('gemini-key').value = S.geminiKey;
-  document.getElementById('proxy-url').value = S.proxyUrl;
+  document.getElementById('proxy-url').value  = S.proxyUrl;
+  // 드롭다운 동기화
+  const sel = document.getElementById('proxy-select');
+  const match = [...sel.options].find(o => o.value === S.proxyUrl);
+  sel.value = match ? S.proxyUrl : '';
   renderTplList();
   updateLearnMgmtStats();
   viewLearnedPatterns();
