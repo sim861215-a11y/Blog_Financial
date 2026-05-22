@@ -933,64 +933,47 @@ let qtrLabel = '';     // 예: '25년 Q3(누계)'
 async function initStep2() {
   const y = S.co.year;
   S.fin.years = [y, y-1, y-2, y-3, y-4];
-  qtrData  = null;
-  qtrLabel = '';
+  qtrData = null; qtrLabel = ''; finData = {};
 
-  // DART 키 없으면 수동 입력 안내
+  // 표는 항상 즉시 열기
+  renderAll({}, S.fin.years);
+  hideErr('dart-err');
+
+  // DART 키 없으면 안내 후 종료 (표는 이미 열림)
   if (!S.dartKey) {
-    showErr('dart-err', 'DART API 키가 없습니다. ⚙ 설정에서 입력하거나 표에 직접 입력해주세요.');
-    finData = {};
-    renderAll({}, S.fin.years);
+    showErr('dart-err', '💡 DART API 키 미설정 — 표에 직접 숫자를 입력하세요. (⚙ 설정에서 키 입력 가능)');
     return;
   }
 
-  hideErr('dart-err');
-  for (const t of ['bs','is','cf']) {
-    document.getElementById('l-'+t).style.display = 'block';
-    document.getElementById('w-'+t).style.display = 'none';
-  }
-
-  try {
-    const proxy = S.proxyUrl;
-    const base  = `${proxy}https://opendart.fss.or.kr/api`;
-    finData = {};
-
-    if (!S.co.corpCode && S.co.name) {
-      showErr('dart-err', 'DART corp_code 조회 중…');
-      try {
-        const r = await dartFetch('list.json', {
-          corp_name: S.co.name, bgn_de: '20150101', end_de: '20261231', page_count: '5'
-        });
-        const d = await r.json();
-        if (d.status === '000' && d.list?.length) {
-          S.co.corpCode = d.list[0].corp_code;
-          if (!S.co.stockCode && d.list[0].stock_code) S.co.stockCode = d.list[0].stock_code;
-          hideErr('dart-err');
-        } else {
-          showErr('dart-err', `"${S.co.name}" corp_code 조회 결과 없음 (상태: ${d.status || '알 수 없음'}).<br>
-            👉 <a href="https://dart.fss.or.kr/dsab001/main.do" target="_blank" style="color:var(--accent);font-weight:700;">DART 기업검색</a>에서
-            기업명 검색 → 기업 클릭 → URL의 8자리 숫자가 corp_code입니다. 아래에 직접 입력해주세요.`);
-          finData = {}; renderAll({}, S.fin.years);
-          toggleManual(true);
-          return;
-        }
-      } catch(e) {
-        showErr('dart-err', `DART 연결 실패 — 모든 프록시를 시도했지만 응답이 없습니다.<br>
-          👉 <a href="https://dart.fss.or.kr/dsab001/main.do" target="_blank" style="color:var(--accent);">DART에서 기업코드 직접 검색</a>
-          후 아래 수동 입력란에 8자리 코드를 입력하세요.`);
-        finData = {}; renderAll({}, S.fin.years);
-        toggleManual(true);
+  // corp_code 없으면 먼저 조회 시도
+  if (!S.co.corpCode && S.co.name) {
+    showErr('dart-err', '⏳ DART corp_code 조회 중…');
+    try {
+      const r = await dartFetch('list.json', {
+        corp_name: S.co.name, bgn_de: '20150101', end_de: '20261231', page_count: '5'
+      });
+      const d = await r.json();
+      if (d.status === '000' && d.list?.length) {
+        S.co.corpCode = d.list[0].corp_code;
+        hideErr('dart-err');
+      } else {
+        showErr('dart-err', '⚠ corp_code 자동 조회 실패 — 표에 직접 입력하거나 1단계로 돌아가 corp_code를 입력하세요.');
         return;
       }
-    }
-
-    if (!S.co.corpCode) {
-      showErr('dart-err', 'DART 기업코드를 찾을 수 없습니다. 수동 입력란에 직접 입력해주세요.');
-      finData = {};
-      renderAll({}, S.fin.years);
+    } catch(e) {
+      showErr('dart-err', '⚠ DART 연결 실패 — 표에 직접 입력하세요. (CORS 프록시 설정 확인)');
       return;
     }
+  }
 
+  if (!S.co.corpCode) {
+    showErr('dart-err', '⚠ corp_code가 없습니다. 1단계로 돌아가 corp_code를 입력하세요.');
+    return;
+  }
+
+  // 5개년 재무 조회
+  showErr('dart-err', '⏳ 재무데이터 조회 중…');
+  try {
     await Promise.all(S.fin.years.map(async yr => {
       try {
         const r = await dartFetch('fnlttSinglAcnt.json', {
@@ -1001,31 +984,27 @@ async function initStep2() {
       } catch(e) { finData[yr] = []; }
     }));
 
-    // ③ 최근 분기 조회 (Q3→반기→Q1 순)
-    const qtrCandidates = [
+    // 최근 분기 조회
+    for (const c of [
       { yr: y,   code: '11014', lbl: `${String(y).slice(2)}년 Q3(누계)` },
       { yr: y,   code: '11012', lbl: `${String(y).slice(2)}년 Q2(누계)` },
       { yr: y,   code: '11013', lbl: `${String(y).slice(2)}년 Q1(누계)` },
       { yr: y-1, code: '11014', lbl: `${String(y-1).slice(2)}년 Q3(누계)` },
-    ];
-    for (const c of qtrCandidates) {
+    ]) {
       try {
         const r = await dartFetch('fnlttSinglAcnt.json', {
           corp_code: S.co.corpCode, bsns_year: c.yr, reprt_code: c.code
         });
         const d = await r.json();
-        if (d.status === '000' && d.list?.length) {
-          qtrData = d.list; qtrLabel = c.lbl; break;
-        }
+        if (d.status === '000' && d.list?.length) { qtrData = d.list; qtrLabel = c.lbl; break; }
       } catch(e) {}
     }
 
     renderAll(finData, S.fin.years);
     hideErr('dart-err');
+    showToast('✅ DART 재무데이터 자동 입력 완료');
   } catch(e) {
-    showErr('dart-err', 'DART 조회 오류: ' + e.message);
-    finData = {};
-    renderAll({}, S.fin.years);
+    showErr('dart-err', `⚠ 재무데이터 조회 실패 — 표에 직접 입력하세요. (${e.message})`);
   }
 }
 
