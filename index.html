@@ -898,12 +898,13 @@ let qtrLabel = '';     // 예: '25년 Q3(누계)'
 
 async function initStep2() {
   const y = S.co.year;
-  S.fin.years = [y, y-1, y-2, y-3, y-4];   // 5개년 (최신→과거)
+  S.fin.years = [y, y-1, y-2, y-3, y-4];
   qtrData  = null;
   qtrLabel = '';
 
-  if (!S.co.corpCode || !S.dartKey) {
-    showErr('dart-err', 'DART 기업코드 또는 API 키 없음. 표에 직접 입력해주세요.');
+  // DART 키 없으면 수동 입력 안내
+  if (!S.dartKey) {
+    showErr('dart-err', 'DART API 키가 없습니다. ⚙ 설정에서 입력하거나 표에 직접 입력해주세요.');
     finData = {};
     renderAll({}, S.fin.years);
     return;
@@ -920,7 +921,38 @@ async function initStep2() {
     const base  = `${proxy}https://opendart.fss.or.kr/api`;
     finData = {};
 
-    // ① 5개년 연간 병렬 조회
+    // ① corp_code가 없으면 기업명으로 먼저 조회
+    if (!S.co.corpCode && S.co.name) {
+      showErr('dart-err', `corp_code 조회 중…`);
+      try {
+        const r = await fetch(`${base}/list.json?crtfc_key=${S.dartKey}&corp_name=${encodeURIComponent(S.co.name)}&bgn_de=20240101&end_de=20251231&page_count=5`);
+        const d = await r.json();
+        if (d.status === '000' && d.list?.length) {
+          S.co.corpCode = d.list[0].corp_code;
+          if (!S.co.stockCode && d.list[0].stock_code) S.co.stockCode = d.list[0].stock_code;
+          hideErr('dart-err');
+        } else {
+          showErr('dart-err', `corp_code 자동 조회 실패 (${d.message || d.status}). 표에 직접 입력해주세요.`);
+          finData = {};
+          renderAll({}, S.fin.years);
+          return;
+        }
+      } catch(e) {
+        showErr('dart-err', `corp_code 조회 오류: ${e.message}`);
+        finData = {};
+        renderAll({}, S.fin.years);
+        return;
+      }
+    }
+
+    if (!S.co.corpCode) {
+      showErr('dart-err', 'DART 기업코드를 찾을 수 없습니다. 수동 입력란에 직접 입력해주세요.');
+      finData = {};
+      renderAll({}, S.fin.years);
+      return;
+    }
+
+    // ② 5개년 연간 병렬 조회
     await Promise.all(S.fin.years.map(async yr => {
       try {
         const r = await fetch(`${base}/fnlttSinglAcnt.json?crtfc_key=${S.dartKey}&corp_code=${S.co.corpCode}&bsns_year=${yr}&reprt_code=11011`);
@@ -929,7 +961,7 @@ async function initStep2() {
       } catch(e) { finData[yr] = []; }
     }));
 
-    // ② 최근 분기 조회 (Q3→반기→Q1 순으로 시도, 당해연도 우선)
+    // ③ 최근 분기 조회 (Q3→반기→Q1 순)
     const qtrCandidates = [
       { yr: y,   code: '11014', lbl: `${String(y).slice(2)}년 Q3(누계)` },
       { yr: y,   code: '11012', lbl: `${String(y).slice(2)}년 Q2(누계)` },
