@@ -947,8 +947,12 @@ async function initStep2() {
           finData = {}; renderAll({}, S.fin.years); return;
         }
       } catch(e) {
-        showErr('dart-err', `DART 연결 오류: ${e.message} — 프록시 설정을 확인하세요.`);
-        finData = {}; renderAll({}, S.fin.years); return;
+        showErr('dart-err', `DART 연결 실패 — 모든 프록시를 시도했지만 응답이 없습니다.<br>
+          👉 <a href="https://dart.fss.or.kr/dsab001/main.do" target="_blank" style="color:var(--accent);">DART에서 기업코드 직접 검색</a>
+          후 아래 수동 입력란에 8자리 코드를 입력하세요.`);
+        finData = {}; renderAll({}, S.fin.years);
+        toggleManual(true);
+        return;
       }
     }
 
@@ -1747,19 +1751,50 @@ function clearNews() {
 }
 
 // ══ 블로그용 프롬프트 ══
-// DART API fetch 헬퍼 — 프록시 방식 자동 처리
+// DART API fetch 헬퍼 — 다중 프록시 자동 폴백
+const DART_PROXIES = [
+  'https://api.allorigins.win/raw?url=',
+  'https://corsproxy.io/?',
+  'https://thingproxy.freeboard.io/fetch/',
+  'https://api.codetabs.com/v1/proxy?quest=',
+];
+
 async function dartFetch(endpoint, params) {
   const qs = new URLSearchParams({ crtfc_key: S.dartKey, ...params }).toString();
   const targetUrl = `https://opendart.fss.or.kr/api/${endpoint}?${qs}`;
 
-  if (!S.proxyUrl) return fetch(targetUrl);
-
-  // allorigins 계열: URL 인코딩 필요
-  if (S.proxyUrl.includes('allorigins') || S.proxyUrl.includes('?url=')) {
-    return fetch(S.proxyUrl + encodeURIComponent(targetUrl));
+  // 로컬 실행 or 프록시 미설정: 직접 호출
+  if (!S.proxyUrl) {
+    return fetch(targetUrl);
   }
-  // corsproxy 계열: 직접 이어붙이기
-  return fetch(S.proxyUrl + targetUrl);
+
+  function proxyUrl(proxy, target) {
+    // allorigins, codetabs 등: URL 인코딩 필요
+    if (proxy.includes('?url=') || proxy.includes('?quest=') || proxy.includes('allorigins')) {
+      return proxy + encodeURIComponent(target);
+    }
+    return proxy + target;
+  }
+
+  // 설정된 프록시를 먼저 시도, 실패하면 나머지 순서대로
+  const ordered = [S.proxyUrl, ...DART_PROXIES.filter(p => p !== S.proxyUrl)];
+
+  for (const proxy of ordered) {
+    try {
+      const res = await fetch(proxyUrl(proxy, targetUrl), { signal: AbortSignal.timeout(8000) });
+      if (res.ok || res.status === 200) {
+        // 성공한 프록시를 저장
+        if (proxy !== S.proxyUrl) {
+          S.proxyUrl = proxy;
+          localStorage.setItem('proxyUrl', proxy);
+          showToast(`✅ 프록시 자동 전환: ${proxy.split('/')[2]}`);
+        }
+        return res;
+      }
+    } catch(e) { /* 다음 프록시 시도 */ }
+  }
+
+  throw new Error('모든 프록시 연결 실패 — corp_code를 직접 입력해주세요.');
 }
 let reportMode = 'blog';
 
