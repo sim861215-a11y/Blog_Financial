@@ -231,7 +231,19 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
         </select>
       </div>
     </div>
-    <div class="field"><label>DART 기업코드 (알고 있을 경우)</label><input type="text" id="m-corpcode" placeholder="8자리 숫자"></div>
+    <div class="field">
+      <label>DART 기업코드 (8자리) — 없으면 아래 버튼으로 조회하세요</label>
+      <div class="row" style="gap:8px;">
+        <input type="text" id="m-corpcode" placeholder="8자리 숫자 (예: 00126380)">
+        <button class="btn btn-secondary btn-sm" style="flex:none;white-space:nowrap;"
+          onclick="openDartSearch()" title="브라우저 새 탭에서 DART API 결과를 직접 확인">
+          🔍 DART 조회
+        </button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:5px;line-height:1.6;">
+        버튼 클릭 → 새 탭에서 JSON 결과 확인 → <code style="background:#eee;padding:1px 4px;border-radius:3px;">"corp_code"</code> 값을 위 칸에 입력
+      </div>
+    </div>
     <button class="btn btn-accent" onclick="confirmManual()">기업 확정 →</button>
   </div>
 </div>
@@ -804,6 +816,18 @@ function selectStock(idx) {
 
   // DART corp_code 보완 (백그라운드)
   if (S.dartKey && isListed) fetchCorpCode(name);
+}
+
+function openDartSearch() {
+  const name = document.getElementById('m-name')?.value.trim()
+             || document.getElementById('co-input')?.value.trim()
+             || S.co.name || '';
+  if (!S.dartKey) {
+    alert('⚙ 설정에서 DART API 키를 먼저 입력해주세요.');
+    openSettings(); return;
+  }
+  const url = `https://opendart.fss.or.kr/api/list.json?crtfc_key=${S.dartKey}&corp_name=${encodeURIComponent(name)}&bgn_de=20230101&end_de=20251231&page_count=5`;
+  window.open(url, '_blank');
 }
 
 async function fetchCorpCode(name) {
