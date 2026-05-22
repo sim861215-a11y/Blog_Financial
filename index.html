@@ -943,8 +943,12 @@ async function initStep2() {
           if (!S.co.stockCode && d.list[0].stock_code) S.co.stockCode = d.list[0].stock_code;
           hideErr('dart-err');
         } else {
-          showErr('dart-err', `corp_code 조회 실패 (${d.message || d.status}). 아래 직접 입력란에 8자리 기업코드를 입력해주세요.`);
-          finData = {}; renderAll({}, S.fin.years); return;
+          showErr('dart-err', `"${S.co.name}" corp_code 조회 결과 없음 (상태: ${d.status || '알 수 없음'}).<br>
+            👉 <a href="https://dart.fss.or.kr/dsab001/main.do" target="_blank" style="color:var(--accent);font-weight:700;">DART 기업검색</a>에서
+            기업명 검색 → 기업 클릭 → URL의 8자리 숫자가 corp_code입니다. 아래에 직접 입력해주세요.`);
+          finData = {}; renderAll({}, S.fin.years);
+          toggleManual(true);
+          return;
         }
       } catch(e) {
         showErr('dart-err', `DART 연결 실패 — 모든 프록시를 시도했지만 응답이 없습니다.<br>
