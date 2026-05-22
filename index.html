@@ -834,7 +834,7 @@ async function fetchCorpCode(name) {
   if (!S.dartKey || !name) return;
   try {
     const r = await dartFetch('list.json', {
-      corp_name: name, bgn_de: '20150101', end_de: '20261231', page_count: '5'
+      corp_name: name, ...dartSearchDates(), page_count: '5'
     });
     const d = await r.json();
     if (d.status === '000' && d.list?.length) {
@@ -950,7 +950,7 @@ async function initStep2() {
     showErr('dart-err', '⏳ DART corp_code 조회 중…');
     try {
       const r = await dartFetch('list.json', {
-        corp_name: S.co.name, bgn_de: '20150101', end_de: '20261231', page_count: '5'
+        corp_name: S.co.name, ...dartSearchDates(), page_count: '5'
       });
       const d = await r.json();
       if (d.status === '000' && d.list?.length) {
@@ -1758,6 +1758,16 @@ function clearNews() {
 }
 
 // ══ 블로그용 프롬프트 ══
+// DART corp_name 검색용 날짜 (3개월 이내 제한)
+function dartSearchDates() {
+  const today = new Date();
+  const end = today.toISOString().slice(0,10).replace(/-/g,'');
+  const from = new Date(today);
+  from.setMonth(from.getMonth() - 3);
+  const bgn = from.toISOString().slice(0,10).replace(/-/g,'');
+  return { bgn_de: bgn, end_de: end };
+}
+
 // DART API fetch 헬퍼 — 다중 프록시 자동 폴백
 const DART_PROXIES = [
   'https://api.allorigins.win/raw?url=',
